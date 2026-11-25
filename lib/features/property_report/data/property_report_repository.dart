@@ -6,6 +6,8 @@ import 'package:dio/dio.dart';
 import '../../../core/network/api_client.dart';
 import '../../../core/network/api_endpoints.dart';
 import 'models/address_suggestion.dart';
+import 'models/agent_sales.dart';
+import 'models/area_details.dart';
 import 'models/property_report.dart';
 
 /// What to look a property up by. The API prefers a coordinate (point in the
@@ -37,18 +39,58 @@ class PropertyReportRepository {
   /// from the API's cache.
   static const Duration _reportTimeout = Duration(seconds: 90);
 
-  /// Addresses matching what the agent has typed so far (Cape Town parcel
-  /// records). Fewer than 3 characters returns nothing.
-  Future<List<AddressSuggestion>> suggest(String text) async {
+  /// Addresses matching what the agent has typed so far. [national] false
+  /// asks the Cape Town and Johannesburg parcel records (fast); true asks
+  /// OpenStreetMap for the whole country (a few seconds). [lat]/[lng] favour
+  /// places nearby. Fewer than 3 characters returns nothing.
+  Future<List<AddressSuggestion>> suggest(
+    String text, {
+    bool national = false,
+    double? lat,
+    double? lng,
+  }) async {
     if (text.trim().length < 3) return const [];
     final response = await _client.get(
-      ApiEndpoints.propertySuggest,
-      queryParameters: {'q': text.trim()},
+      national
+          ? ApiEndpoints.propertySuggestNational
+          : ApiEndpoints.propertySuggest,
+      queryParameters: {
+        'q': text.trim(),
+        if (lat != null && lng != null) ...{'lat': lat, 'lng': lng},
+      },
+      receiveTimeout: national ? const Duration(seconds: 15) : null,
     );
     return [
       for (final e in response.data as List)
         AddressSuggestion.fromJson(e as Map<String, dynamic>),
     ];
+  }
+
+  /// The City's address at a GPS point (Cape Town, Johannesburg): the erf
+  /// under the pin first, then its neighbours, with the house number and the
+  /// City's official suburb. Empty elsewhere.
+  Future<List<AddressSuggestion>> addressAt(double lat, double lng) async {
+    final response = await _client.get(
+      ApiEndpoints.propertySuggestAt,
+      queryParameters: {'lat': lat, 'lng': lng},
+    );
+    return [
+      for (final e in response.data as List)
+        AddressSuggestion.fromJson(e as Map<String, dynamic>),
+    ];
+  }
+
+  /// The erf under a point and its outline (lat/lng, closed), for the pin
+  /// map; null where there is no parcel with a boundary, or the API is
+  /// older than the endpoint.
+  Future<ParcelOutline?> parcelAt(double lat, double lng) async {
+    final response = await _client.get(
+      ApiEndpoints.propertyParcelAt,
+      queryParameters: {'lat': lat, 'lng': lng},
+    );
+    final data = response.data;
+    if (data is! Map<String, dynamic>) return null;
+    return ParcelOutline.fromJson(data);
   }
 
   Future<List<PropertyCandidate>> resolve(ReportQuery q) async {
@@ -74,13 +116,146 @@ class PropertyReportRepository {
     return const [];
   }
 
-  Future<PropertyReport> fetchReport(PropertyCandidate c) async {
+  /// The report. Without [includeComparables] it is only the property's own
+  /// record (sizes, zoning, value): a few seconds instead of up to half a
+  /// minute, which is all filling in a listing needs.
+  Future<PropertyReport> fetchReport(
+    PropertyCandidate c, {
+    bool includeComparables = true,
+  }) async => PropertyReport.fromJson(
+    await fetchReportJson(c, includeComparables: includeComparables),
+  );
+
+  /// The report as the API sends it, so it can be kept on the phone.
+  Future<Map<String, dynamic>> fetchReportJson(
+    PropertyCandidate c, {
+    bool includeComparables = true,
+  }) async {
     final response = await _client.get(
       ApiEndpoints.propertyReport(c.municipality, c.erf),
-      queryParameters: {'suburb': c.suburb, 'includeComparables': true},
+      queryParameters: {
+        'suburb': c.suburb,
+        'sg26': ?c.sg26,
+        'includeComparables': includeComparables,
+      },
       receiveTimeout: _reportTimeout,
     );
-    return PropertyReport.fromJson(response.data as Map<String, dynamic>);
+    return response.data as Map<String, dynamic>;
+  }
+
+  /// Logs a sale the agent knows about. Returns true when another agent had
+  /// already logged it (it then counts as confirmation instead of a new sale).
+  Future<bool> addAgentSale(NewAgentSale sale) async {
+    final response = await _client.post(
+      ApiEndpoints.comparables,
+      data: sale.toJson(),
+    );
+    final data = response.data;
+    return data is Map && data['wasDuplicate'] == true;
+  }
+
+  Future<void> deleteAgentSale(String id) =>
+      _client.delete(ApiEndpoints.comparable(id));
+
+  /// The agency's own listings in [suburb], except [excludeListingId].
+  Future<List<MarketListing>> fetchMarket(
+    String suburb, {
+    int? excludeListingId,
+    double? lat,
+    double? lng,
+  }) async => [
+    for (final e in await fetchMarketJson(
+      suburb,
+      excludeListingId: excludeListingId,
+      lat: lat,
+      lng: lng,
+    ))
+      MarketListing.fromJson(e as Map<String, dynamic>),
+  ];
+
+  Future<List<dynamic>> fetchMarketJson(
+    String suburb, {
+    int? excludeListingId,
+    double? lat,
+    double? lng,
+  }) async {
+    if (suburb.trim().isEmpty) return const [];
+    final response = await _client.get(
+      ApiEndpoints.comparablesMarket,
+      queryParameters: {
+        'suburb': suburb.trim(),
+        'excludeListingId': ?excludeListingId,
+        'lat': ?lat,
+        'lng': ?lng,
+      },
+    );
+    return response.data as List;
+  }
+
+  /// Climate, population, household income and crime around a point.
+  Future<AreaDetails> fetchArea(double lat, double lng) async =>
+      AreaDetails.fromJson(await fetchAreaJson(lat, lng));
+
+  Future<Map<String, dynamic>> fetchAreaJson(double lat, double lng) async {
+    final response = await _client.get(
+      ApiEndpoints.propertyArea,
+      queryParameters: {'lat': lat, 'lng': lng},
+      receiveTimeout: _reportTimeout,
+    );
+    return response.data as Map<String, dynamic>;
+  }
+
+  /// Homes for sale like this one on Property24. [p24Suburb] picks a
+  /// Property24 suburb other than the ones matched to the report's.
+  Future<ForSale> fetchForSale(
+    PropertyReport report, {
+    int? bedrooms,
+    double? floorM2,
+    double? erfM2,
+    int? p24Suburb,
+    double? priceZar,
+    int max = 4,
+  }) async => ForSale.fromJson(
+    await fetchForSaleJson(
+      report,
+      bedrooms: bedrooms,
+      floorM2: floorM2,
+      erfM2: erfM2,
+      p24Suburb: p24Suburb,
+      priceZar: priceZar,
+      max: max,
+    ),
+  );
+
+  Future<Map<String, dynamic>> fetchForSaleJson(
+    PropertyReport report, {
+    int? bedrooms,
+    double? floorM2,
+    double? erfM2,
+    int? p24Suburb,
+    double? priceZar,
+    int max = 4,
+  }) async {
+    final response = await _client.get(
+      ApiEndpoints.propertyForSale(report.municipality, report.erf),
+      queryParameters: {
+        'suburb': report.suburb,
+        'township': report.township,
+        'p24Suburb': ?p24Suburb,
+        'bedrooms': ?bedrooms,
+        'floorM2': ?floorM2,
+        'erfM2': ?erfM2,
+        'max': max,
+        // Homes priced like this one rank first.
+        'priceZar': ?priceZar,
+        // With the property's location the nearest homes are kept, whatever
+        // suburb Property24 files them under.
+        'lat': ?report.lat,
+        'lng': ?report.lng,
+      },
+      receiveTimeout: _reportTimeout,
+    );
+    return response.data as Map<String, dynamic>;
   }
 
   /// The site plan SVG, or null when it cannot be drawn.
@@ -115,4 +290,23 @@ class PropertyReportRepository {
       return null;
     }
   }
+}
+
+/// An erf and its boundary, as `GET /api/property/parcel-at` sends it.
+class ParcelOutline {
+  final String erf;
+  final List<({double lat, double lng})> points;
+
+  const ParcelOutline({required this.erf, required this.points});
+
+  factory ParcelOutline.fromJson(Map<String, dynamic> j) => ParcelOutline(
+    erf: j['erf']?.toString() ?? '',
+    points: [
+      for (final p in (j['points'] as List? ?? const []))
+        (
+          lat: ((p as Map<String, dynamic>)['lat'] as num).toDouble(),
+          lng: (p['lng'] as num).toDouble(),
+        ),
+    ],
+  );
 }

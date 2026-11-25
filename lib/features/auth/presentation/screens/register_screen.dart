@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -14,9 +16,13 @@ import '../../../../core/widgets/field_prefixes.dart';
 import '../../../../core/widgets/custom_text_input.dart';
 import '../../../../core/widgets/scoped_brand_theme.dart';
 import '../../../settings/presentation/widgets/agency_picker.dart';
+import '../../../settings/presentation/widgets/profile_media.dart';
 import '../../data/models/agent_profile.dart';
 import '../../providers/agent_profile_provider.dart';
 import '../../providers/auth_provider.dart';
+import '../../../../core/widgets/real_estate_dialog.dart';
+import '../../../../core/theme/themes.dart';
+import '../../../../core/widgets/circle_crop.dart';
 
 class RegisterScreen extends ConsumerStatefulWidget {
   const RegisterScreen({super.key});
@@ -148,6 +154,16 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
     });
   }
 
+  /// A profile photo chosen before the account exists; uploaded once it does.
+  String? _photoPath;
+
+  Future<void> _pickPhoto() async {
+    final picked = await pickProfileImage(maxSide: 1600);
+    if (picked == null || !mounted) return;
+    final path = await cropToCircle(context, path: picked);
+    if (path != null && mounted) setState(() => _photoPath = path);
+  }
+
   Future<void> _handleRegister() async {
     if (!_validateFields()) return;
 
@@ -189,16 +205,77 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
       await ref.read(agencyProvider.notifier).setAgency(agency);
       // The country answer sets both the country and the currency.
       await ref.read(regionProvider.notifier).setBoth(_country);
+      // Best effort: the account exists either way, and both can be done
+      // again from My Profile.
+      final profiles = ref.read(agentProfileProvider.notifier);
+      try {
+        await profiles.save(profile); // records the agency slug on the server
+        if (_photoPath != null) await profiles.uploadPhoto(_photoPath!);
+      } catch (e) {
+        debugPrint('Register: profile photo or agency not saved yet: $e');
+      }
     }
 
     if (!mounted) return;
     setState(() => _isLoading = false);
-    if (authState.errorMessage != null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(authState.errorMessage!),
-          backgroundColor: theme.error,
-        ),
+    // Success needs nothing here: signing in takes the router to Home. A
+    // failure stays on this screen, with everything typed kept, and is said
+    // in a dialog so it cannot be missed.
+    final error = authState.errorMessage;
+    if (authState.status != AuthStatus.authenticated && error != null) {
+      await _showRegisterError(error, theme);
+    }
+  }
+
+  Future<void> _showRegisterError(String error, RealEstateTheme theme) async {
+    final textTheme = theme.toThemeData().textTheme;
+    final email = _emailController.text.trim();
+    final taken = error == AuthNotifier.emailTakenMessage;
+    if (taken) {
+      setState(() => _errors['email'] = 'This email already has an account');
+    }
+    final choice = await showRealEstateDialog<String>(
+      context: context,
+      theme: theme,
+      title: taken ? 'Already registered' : "Couldn't create the account",
+      content: Text(
+        taken
+            ? '$email already has a RealWorth account. Sign in with it, or '
+                  'set a new password if it has been forgotten (a code is '
+                  'emailed to that address).'
+            : error,
+        style: textTheme.bodyLarge,
+      ),
+      actions: [
+        if (taken) ...[
+          TextButton(
+            onPressed: () => Navigator.pop(context, 'reset'),
+            child: Text(
+              'Set a new password',
+              style: TextStyle(color: theme.primaryColor),
+            ),
+          ),
+          dialogActionButton(
+            theme: theme,
+            text: 'Sign in',
+            onPressed: () => Navigator.pop(context, 'login'),
+          ),
+        ] else
+          dialogActionButton(
+            theme: theme,
+            text: 'OK',
+            onPressed: () => Navigator.pop(context),
+          ),
+      ],
+    );
+    if (!mounted) return;
+    if (choice == 'login') context.go(AppRoutes.loginPath);
+    if (choice == 'reset') {
+      context.go(
+        Uri(
+          path: AppRoutes.forgotPasswordPath,
+          queryParameters: {'email': email},
+        ).toString(),
       );
     }
   }
@@ -260,6 +337,36 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
                       'Create Agent Account',
                       style: textTheme.titleLarge?.copyWith(
                         color: theme.textPrimary,
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    GestureDetector(
+                      onTap: _pickPhoto,
+                      child: Column(
+                        children: [
+                          CircleAvatar(
+                            radius: 40,
+                            backgroundColor: theme.primaryColor.withValues(
+                              alpha: 0.12,
+                            ),
+                            foregroundImage: _photoPath == null
+                                ? null
+                                : FileImage(File(_photoPath!)),
+                            child: Icon(
+                              Icons.add_a_photo_outlined,
+                              color: theme.primaryColor,
+                            ),
+                          ),
+                          const SizedBox(height: 6),
+                          Text(
+                            _photoPath == null
+                                ? 'Add your photo (optional)'
+                                : 'Change photo',
+                            style: textTheme.bodySmall?.copyWith(
+                              color: theme.primaryColor,
+                            ),
+                          ),
+                        ],
                       ),
                     ),
                     const SizedBox(height: 16),

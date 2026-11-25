@@ -35,6 +35,8 @@ class CustomTextInput extends StatelessWidget {
   /// while the password is shown ([obscureText] false), so the keyboard can
   /// never change what the agent typed.
   final bool isPassword;
+  final FocusNode? focusNode;
+  final bool autofocus;
 
   const CustomTextInput({
     super.key,
@@ -59,6 +61,8 @@ class CustomTextInput extends StatelessWidget {
     this.enableSuggestions = true,
     this.textCapitalization,
     this.isPassword = false,
+    this.focusNode,
+    this.autofocus = false,
   });
 
   /// Plain text starts with a capital (the agent can still switch to lower
@@ -94,6 +98,8 @@ class CustomTextInput extends StatelessWidget {
 
     return TextFormField(
       controller: controller,
+      focusNode: focusNode,
+      autofocus: autofocus,
       initialValue: controller == null ? initialValue : null,
       onChanged: onChanged,
       keyboardType: isPassword ? TextInputType.visiblePassword : keyboardType,
@@ -104,6 +110,14 @@ class CustomTextInput extends StatelessWidget {
       autocorrect: autocorrect && !isPassword,
       enableSuggestions: enableSuggestions && !isPassword,
       textCapitalization: _capitalization,
+      // The keyboard's own key goes to the next field (one line) or adds a
+      // line (notes).
+      textInputAction: maxLines == 1
+          ? TextInputAction.next
+          : TextInputAction.newline,
+      // Keep room under the field being typed in, so the start of the next
+      // one shows above the keyboard and it is clear the form goes on.
+      scrollPadding: const EdgeInsets.fromLTRB(20, 20, 20, 120),
       style: textTheme.bodyLarge?.copyWith(
         fontWeight: FontWeight.w600,
         color: resolvedTheme.textPrimary,
@@ -143,12 +157,14 @@ class CustomTextInput extends StatelessWidget {
           hasError ? resolvedTheme.error : resolvedTheme.borderLight,
           1.0,
         ),
+        // A clearly thicker border in the brand colour: it must be obvious
+        // which field is being typed in.
         focusedBorder: buildBorder(
           hasError ? resolvedTheme.error : resolvedTheme.primaryColor,
-          1.5,
+          2,
         ),
         errorBorder: buildBorder(resolvedTheme.error, 1.0),
-        focusedErrorBorder: buildBorder(resolvedTheme.error, 1.5),
+        focusedErrorBorder: buildBorder(resolvedTheme.error, 2),
         contentPadding: const EdgeInsets.symmetric(
           horizontal: 16.0,
           vertical: 16.0,

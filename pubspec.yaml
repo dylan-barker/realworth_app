@@ -52,6 +52,11 @@ dependencies:
   flutter_svg: ^2.3.0
   pdf: ^3.13.1
   printing: ^5.15.1
+  flutter_map: ^8.3.2
+  latlong2: ^0.10.1
+  image: ^4.10.1
+  camera: ^0.12.1
+  share_plus: ^13.3.1
 
 dev_dependencies:
   flutter_test:
@@ -76,10 +81,20 @@ flutter:
   # the material Icons class.
   uses-material-design: true
 
+  # The default signature: the agent's name in a handwriting face (Great Vibes,
+  # SIL OFL), shown in My Profile and printed on the letter until the agent
+  # draws or uploads their own.
+  fonts:
+    - family: GreatVibes
+      fonts:
+        - asset: assets/fonts/GreatVibes-Regular.ttf
+
   assets:
     - .env
     - assets/images/logo.jpg
     - assets/images/logo_wide.png
+    # Lato (SIL OFL) for the PDF reports; see lib/features/property_report/report/report_fonts.dart.
+    - assets/fonts/
     # White-label agency logos, supplied by the brand owner. The folder ships
     # empty; AgencyLogo falls back to a monogram when a file is absent.
     - assets/images/agencies/

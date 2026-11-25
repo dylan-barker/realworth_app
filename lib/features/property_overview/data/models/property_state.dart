@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'contact.dart';
+import 'listing_details.dart';
 import 'listing_document.dart';
 import 'listing_parking.dart';
 import 'listing_valuation.dart';
@@ -29,6 +30,12 @@ class PropertyState {
   final String country;
   final String postalCode;
   final String estateName;
+
+  /// The area buyers search for it by: Property24's name (Steynsrust) when
+  /// it differs from the official [suburb] (Lynn's View). Suggested from the
+  /// Property24 homes nearest the pin; the agent can change it. Flyers and
+  /// the buyer's report use it; the valuation and records use [suburb].
+  final String marketingArea;
   final String erfNumber;
   final double? latitude;
   final double? longitude;
@@ -48,6 +55,9 @@ class PropertyState {
 
   // Step 5: Expenses
   final ListingValuation listingValuation;
+
+  /// The myEdge form's further details and the mandate information.
+  final ListingDetails details;
   final PropertyRunningCosts propertyRunningCosts;
 
   /// Bills and statements (water, electricity, municipal, levies) attached
@@ -98,6 +108,7 @@ class PropertyState {
     this.country = '',
     this.postalCode = '',
     this.estateName = '',
+    this.marketingArea = '',
     this.erfNumber = '',
     this.latitude,
     this.longitude,
@@ -113,6 +124,7 @@ class PropertyState {
     this.outdoorHiddenFeatures = const [],
     this.exteriorPhotos = const [],
     this.listingValuation = const ListingValuation(),
+    this.details = const ListingDetails(),
     this.propertyRunningCosts = const PropertyRunningCosts(),
     this.documents = const [],
     this.removedDocumentIds = const [],
@@ -137,6 +149,7 @@ class PropertyState {
     String? country,
     String? postalCode,
     String? estateName,
+    String? marketingArea,
     String? erfNumber,
     Object? latitude = _unset,
     Object? longitude = _unset,
@@ -151,6 +164,7 @@ class PropertyState {
     List<String>? outdoorHiddenFeatures,
     List<String>? exteriorPhotos,
     ListingValuation? listingValuation,
+    ListingDetails? details,
     PropertyRunningCosts? propertyRunningCosts,
     List<ListingDocument>? documents,
     List<int>? removedDocumentIds,
@@ -177,6 +191,7 @@ class PropertyState {
       country: country ?? this.country,
       postalCode: postalCode ?? this.postalCode,
       estateName: estateName ?? this.estateName,
+      marketingArea: marketingArea ?? this.marketingArea,
       erfNumber: erfNumber ?? this.erfNumber,
       latitude: identical(latitude, _unset)
           ? this.latitude
@@ -199,6 +214,7 @@ class PropertyState {
           outdoorHiddenFeatures ?? this.outdoorHiddenFeatures,
       exteriorPhotos: exteriorPhotos ?? this.exteriorPhotos,
       listingValuation: listingValuation ?? this.listingValuation,
+      details: details ?? this.details,
       propertyRunningCosts: propertyRunningCosts ?? this.propertyRunningCosts,
       documents: documents ?? this.documents,
       removedDocumentIds: removedDocumentIds ?? this.removedDocumentIds,
@@ -238,6 +254,7 @@ class PropertyState {
     country.trim(),
     postalCode.trim(),
     estateName.trim(),
+    marketingArea.trim(),
     erfNumber.trim(),
     latitude,
     longitude,
@@ -256,6 +273,7 @@ class PropertyState {
           r.conditionRating,
           r.score,
           r.notes.trim(),
+          r.unit?.toJson().toString(),
           [for (final p in r.photos) p.path],
           [for (final f in r.features) f.description],
         ],
@@ -265,11 +283,8 @@ class PropertyState {
     ],
     outdoorFeatures,
     exteriorPhotos,
-    [
-      listingValuation.ownersNetPrice.trim(),
-      listingValuation.agentValuation.trim(),
-      listingValuation.commissionPercent.trim(),
-    ],
+    listingValuation.content,
+    details.encode(),
     [
       propertyRunningCosts.monthlyLevy.trim(),
       propertyRunningCosts.monthlyRates.trim(),
@@ -288,6 +303,7 @@ class PropertyState {
   ];
 
   static List<String> _contactContent(Contact c) => [
+    c.title,
     c.fullName.trim(),
     c.idNumber.trim(),
     c.companyName.trim(),
@@ -319,6 +335,7 @@ class PropertyState {
           listingValuation.ownersNetPrice,
           listingValuation.agentValuation,
           listingValuation.commissionPercent,
+          listingValuation.lastPurchasePrice,
         ].any((v) => v.trim().isNotEmpty) ||
         latitude != null ||
         facingId != null ||
@@ -380,7 +397,11 @@ class PropertyState {
   }
 
   bool get isValuationComplete =>
-      listingValuation.ownersNetPrice.trim().isNotEmpty;
+      listingValuation.ownersNetPrice.trim().isNotEmpty ||
+      listingValuation.listingPrice.trim().isNotEmpty;
+
+  /// Optional: when and for how much the owners bought, and their bond.
+  bool get isPurchaseCaptured => listingValuation.hasPurchase;
 
   /// The app's suggested house score as a percentage: the room scores,
   /// weighted by how much each kind of room matters (see

@@ -20,6 +20,8 @@ PropertyReport _fixture({List<Map<String, dynamic>>? imagery}) {
 }
 
 void main() {
+  // The PDFs load their font from the asset bundle.
+  TestWidgetsFlutterBinding.ensureInitialized();
   group('PropertyReport.fromJson', () {
     test('reads the live report', () {
       final r = _fixture();
@@ -60,10 +62,56 @@ void main() {
     });
   });
 
+  group('consistency helpers', () {
+    test('drops this suburb from a sale\'s address, not another\'s', () {
+      final r = _fixture();
+      expect(r.withoutSuburb('3 MAIN ROAD ${r.suburb}'), '3 MAIN ROAD');
+      expect(r.withoutSuburb('3 MAIN ROAD ELSEWHERE'), '3 MAIN ROAD ELSEWHERE');
+    });
+
+    test('warns when the listing\'s floor area moves the range', () {
+      final r = _fixture();
+      expect(r.floorAreaWarning, isNull);
+      final bigger = r.forListingFloorArea(r.dwellingExtentM2! * 1.3);
+      expect(bigger.floorAreaWarning, contains('30% larger'));
+      expect(bigger.cityRange, r.indicativeValue);
+      // Within 5% it is the same home: no second range, no warning.
+      expect(
+        r.forListingFloorArea(r.dwellingExtentM2! * 1.03).floorAreaWarning,
+        isNull,
+      );
+    });
+  });
+
   test('Rand is grouped with non-breaking spaces', () {
     expect(rand(7100000), 'R 7 100 000');
     expect(groupDigits(1085), '1 085');
     expect(groupDigits(59), '59');
+  });
+
+  test('reads the source, method and coverage of a Johannesburg report', () {
+    final json =
+        jsonDecode(
+              File(
+                'test/fixtures/property_report_53927.json',
+              ).readAsStringSync(),
+            )
+            as Map<String, dynamic>;
+    json
+      ..['municipality'] = 'coj'
+      ..['dataSource'] = 'City of Johannesburg open data'
+      ..['comparablesMethod'] =
+          'The last registered sale of every stand within 800 m.'
+      ..['coverageNote'] = 'Building sizes are not published.'
+      ..['rollEffectiveFrom'] = '2023-07-01';
+    final r = PropertyReport.fromJson(json);
+    expect(r.dataSource, 'City of Johannesburg open data');
+    expect(r.comparablesMethod, contains('800 m'));
+    expect(r.coverageNote, isNotNull);
+    expect(r.rollEffectiveFrom, DateTime(2023, 7, 1));
+    // An older API without these fields still reads as Cape Town.
+    expect(_fixture().dataSource, 'City of Cape Town open data');
+    expect(_fixture().coverageNote, isNull);
   });
 
   test('titleCase', () {

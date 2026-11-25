@@ -4,12 +4,14 @@ import 'package:flutter_native_splash/flutter_native_splash.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'features/report_settings/providers/report_settings_provider.dart';
 import 'core/constants/app_constants.dart';
 import 'core/network/platform_config.dart';
 import 'core/router/app_router.dart';
 import 'core/theme/theme_provider.dart';
 import 'features/auth/providers/agent_profile_provider.dart';
 import 'features/auth/providers/auth_provider.dart';
+import 'core/widgets/keyboard_bar.dart';
 
 void main() async {
   final widgetsBinding = WidgetsFlutterBinding.ensureInitialized();
@@ -49,6 +51,8 @@ class _MyAppState extends ConsumerState<MyApp> {
     final themeConfig = ref.watch(themeConfigProvider);
     final themeMode = ref.watch(themeModeProvider);
     final router = ref.watch(appRouterProvider);
+    // Keeps the house-score weighting in step with the agent's own settings.
+    ref.watch(reportSettingsProvider);
     // Keep the profile alive from launch: it fetches the agent's profile and
     // applies their agency's brand whenever someone signs in.
     ref.listen(agentProfileProvider, (_, _) {});
@@ -60,6 +64,7 @@ class _MyAppState extends ConsumerState<MyApp> {
       darkTheme: themeConfig.toDarkThemeData(),
       themeMode: themeMode,
       routerConfig: router,
+      builder: (context, child) => KeyboardBar(child: child!),
     );
   }
 }

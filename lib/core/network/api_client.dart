@@ -33,7 +33,8 @@ class ApiClient {
     // web is unaffected: the browser owns TLS validation there.
     applyDebugTlsBypass(_dio);
     _dio.interceptors.addAll([
-      LogInterceptor(requestBody: kDebugMode, responseBody: kDebugMode),
+      // Debug only: the request log prints headers, the sign-in token included.
+      if (kDebugMode) LogInterceptor(requestBody: true, responseBody: true),
       InterceptorsWrapper(
         onRequest: (options, handler) {
           if (_token != null) {
@@ -191,7 +192,13 @@ class ApiClient {
   }
 
   Future<Response<T>> put<T>(String path, {dynamic data}) {
-    return _dio.put<T>(path, data: data);
+    return _dio.put<T>(
+      path,
+      data: data,
+      options: data is FormData
+          ? Options(sendTimeout: uploadTimeout, receiveTimeout: uploadTimeout)
+          : null,
+    );
   }
 
   Future<Response<T>> delete<T>(String path) {

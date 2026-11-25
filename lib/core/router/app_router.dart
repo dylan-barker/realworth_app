@@ -9,6 +9,8 @@ import '../../features/auth/providers/auth_provider.dart';
 import '../../features/home/presentation/screens/home_screen.dart';
 import '../../features/property_report/presentation/screens/property_report_screen.dart';
 import '../../features/property_overview/presentation/screens/address_screen.dart';
+import '../../features/property_overview/presentation/screens/mandate_screen.dart';
+import '../../features/property_overview/presentation/screens/purchase_history_screen.dart';
 import '../../features/property_overview/presentation/screens/building_info_screen.dart';
 import '../../features/property_overview/presentation/screens/expenses_screen.dart';
 import '../../features/property_overview/presentation/screens/owner_details_screen.dart';
@@ -16,6 +18,7 @@ import '../../features/property_overview/presentation/screens/property_features_
 import '../../features/property_overview/presentation/screens/property_overview_screen.dart';
 import '../../features/property_overview/presentation/screens/room_details_screen.dart';
 import '../../features/property_overview/presentation/screens/valuation_screen.dart';
+import '../../features/report_settings/presentation/screens/report_settings_screen.dart';
 import '../../features/settings/presentation/screens/profile_screen.dart';
 import '../../features/settings/presentation/screens/settings_screen.dart';
 import '../constants/route_constants.dart';
@@ -23,12 +26,20 @@ import '../constants/route_constants.dart';
 final _rootNavigatorKey = GlobalKey<NavigatorState>();
 
 final appRouterProvider = Provider<GoRouter>((ref) {
-  final authState = ref.watch(authProvider);
+  // One router for the app's life. Rebuilding it whenever sign-in state
+  // changed (an error message included) restarted navigation at the login
+  // screen, throwing a failed registration away; instead the redirect is
+  // re-run when the sign-in status itself changes.
+  final signIn = ValueNotifier(ref.read(authProvider).status);
+  ref.listen(authProvider.select((a) => a.status), (_, s) => signIn.value = s);
+  ref.onDispose(signIn.dispose);
 
   return GoRouter(
     navigatorKey: _rootNavigatorKey,
     initialLocation: AppRoutes.loginPath,
+    refreshListenable: signIn,
     redirect: (context, state) {
+      final authState = ref.read(authProvider);
       final isAuthenticated = authState.status == AuthStatus.authenticated;
       final isInitialized = authState.status != AuthStatus.uninitialized;
       final isLoginRoute = state.matchedLocation == AppRoutes.loginPath;
@@ -92,11 +103,19 @@ final appRouterProvider = Provider<GoRouter>((ref) {
         builder: (context, state) => const ProfileScreen(),
       ),
       GoRoute(
+        path: AppRoutes.reportSettingsPath,
+        parentNavigatorKey: _rootNavigatorKey,
+        builder: (context, state) => const ReportSettingsScreen(),
+      ),
+      GoRoute(
         path: AppRoutes.propertyPath,
         parentNavigatorKey: _rootNavigatorKey,
         builder: (context, state) {
           final id = int.parse(state.pathParameters['id']!);
-          return PropertyOverviewScreen(propertyId: id);
+          return PropertyOverviewScreen(
+            propertyId: id,
+            isNew: state.uri.queryParameters['new'] == '1',
+          );
         },
       ),
       // Property type is now a dropdown on the property overview screen; the
@@ -112,7 +131,15 @@ final appRouterProvider = Provider<GoRouter>((ref) {
       GoRoute(
         path: AppRoutes.addressPath,
         parentNavigatorKey: _rootNavigatorKey,
-        builder: (context, state) => const AddressScreen(),
+        // A new listing opens here first, sliding up like a dialog.
+        pageBuilder: (context, state) {
+          final isNew = state.uri.queryParameters['new'] == '1';
+          return MaterialPage(
+            key: state.pageKey,
+            fullscreenDialog: isNew,
+            child: AddressScreen(isNew: isNew),
+          );
+        },
       ),
       GoRoute(
         path: AppRoutes.buildingInfoPath,
@@ -159,6 +186,16 @@ final appRouterProvider = Provider<GoRouter>((ref) {
         path: AppRoutes.valuationPath,
         parentNavigatorKey: _rootNavigatorKey,
         builder: (context, state) => const ValuationScreen(),
+      ),
+      GoRoute(
+        path: AppRoutes.purchaseHistoryPath,
+        parentNavigatorKey: _rootNavigatorKey,
+        builder: (context, state) => const PurchaseHistoryScreen(),
+      ),
+      GoRoute(
+        path: AppRoutes.mandatePath,
+        parentNavigatorKey: _rootNavigatorKey,
+        builder: (context, state) => const MandateScreen(),
       ),
       GoRoute(
         path: AppRoutes.contactsPath,

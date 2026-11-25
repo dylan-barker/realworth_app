@@ -19,13 +19,30 @@ class ApiEndpoints {
 
   // Agent profile
   static const String agentMe = '/api/agents/me';
+  static const String agentDeleteMe = '/api/agents/me/delete';
+  static const String agentPhoto = '/api/agents/me/photo';
+  static const String agentSignature = '/api/agents/me/signature';
+  static String agentLogo(String kind) => '/api/agents/me/logos/$kind';
+  static const String agentBrochurePages = '/api/agents/me/brochure-pages';
+  static const String agentReportSettings = '/api/agents/me/report-settings';
 
   // White-label agencies
   static const String agencies = '/api/agencies';
 
-  // Property reports from public municipal data (Cape Town)
+  // Property reports from public municipal data (Cape Town, Johannesburg, national cadastre)
   static const String propertyResolve = '/api/property/resolve';
   static const String propertySuggest = '/api/property/suggest';
+  static const String propertySuggestNational =
+      '/api/property/suggest/national';
+  static const String propertySuggestAt = '/api/property/suggest/at';
+  static const String propertyParcelAt = '/api/property/parcel-at';
+  static const String propertyArea = '/api/property/area';
+  static String propertyForSale(String municipality, String erf) =>
+      '/api/property/$municipality/${Uri.encodeComponent(erf)}/for-sale';
+  static const String comparables = '/api/comparables';
+  static const String comparablesMine = '/api/comparables/mine';
+  static const String comparablesMarket = '/api/comparables/market';
+  static String comparable(String id) => '/api/comparables/$id';
   static String propertyReport(String municipality, String erf) =>
       '/api/property/$municipality/${Uri.encodeComponent(erf)}';
 
@@ -35,6 +52,7 @@ class ApiEndpoints {
   static String listing(int id) => '/api/listings/$id';
   static String listingSubmit(int id) => '/api/listings/$id/submit';
   static String listingHouseScore(int id) => '/api/listings/$id/house-score';
+  static String listingDetails(int id) => '/api/listings/$id/details';
   static String listingArchive(int id) => '/api/listings/$id/archive';
   static String listingAddress(int id) => '/api/listings/$id/address';
 

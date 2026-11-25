@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 // The property report the API assembles from public municipal data
 // (`GET /api/property/{municipality}/{erf}`): site, buildings, municipal value,
 // suburb trend and filtered comparable sales.
@@ -6,6 +8,8 @@
 //   * ImageryRef.allowedInPrint comes from the server. The PDF export only uses
 //     [PropertyReport.printableImagery]; Street View is screen-only.
 //   * Imagery is always shown with its attribution next to it, uncropped.
+
+import 'agent_sales.dart';
 
 double? _d(Object? v) => (v as num?)?.toDouble();
 
@@ -35,6 +39,14 @@ class PropertyCandidate {
       );
 
   String get label => 'Erf $erf, ${_title(suburb)}';
+
+  Map<String, dynamic> toJson() => {
+    'municipality': municipality,
+    'erf': erf,
+    'sg26': sg26,
+    'suburb': suburb,
+    'township': township,
+  };
 }
 
 class ImageryRef {
@@ -73,6 +85,15 @@ class ComparableSale {
   final bool included;
   final String? excludedBecause;
 
+  /// Listed so the report shows at least ten sales, but not used for the
+  /// range (the next most alike after the ones used).
+  final bool reference;
+
+  /// How far from the subject, when the source gives locations.
+  final double? distanceM;
+  final double? lat;
+  final double? lng;
+
   const ComparableSale({
     required this.address,
     required this.erfExtentM2,
@@ -84,6 +105,10 @@ class ComparableSale {
     this.indexedPriceZar,
     this.pricePerDwellingM2,
     this.excludedBecause,
+    this.distanceM,
+    this.lat,
+    this.lng,
+    this.reference = false,
   });
 
   factory ComparableSale.fromJson(Map<String, dynamic> j) => ComparableSale(
@@ -97,6 +122,10 @@ class ComparableSale {
     pricePerDwellingM2: _d(j['pricePerDwellingM2']),
     included: j['included'] as bool? ?? false,
     excludedBecause: j['excludedBecause'] as String?,
+    distanceM: _d(j['distanceM']),
+    lat: _d(j['lat']),
+    lng: _d(j['lng']),
+    reference: j['reference'] as bool? ?? false,
   );
 }
 
@@ -190,6 +219,12 @@ class ComparableSummary {
   final double? medianPricePerDwellingM2;
   final double? medianPricePerErfM2;
 
+  /// The radius the comparables were taken from; null = the whole area.
+  final int? radiusM;
+  final int excludedMultiProperty;
+  final int excludedNoBuilding;
+  final int excludedTooFar;
+
   const ComparableSummary({
     required this.raw,
     required this.included,
@@ -199,6 +234,10 @@ class ComparableSummary {
     required this.excludedDissimilar,
     this.medianPricePerDwellingM2,
     this.medianPricePerErfM2,
+    this.radiusM,
+    this.excludedMultiProperty = 0,
+    this.excludedNoBuilding = 0,
+    this.excludedTooFar = 0,
   });
 
   factory ComparableSummary.fromJson(Map<String, dynamic> j) =>
@@ -211,6 +250,10 @@ class ComparableSummary {
         excludedDissimilar: j['excludedDissimilar'] as int? ?? 0,
         medianPricePerDwellingM2: _d(j['medianPricePerDwellingM2']),
         medianPricePerErfM2: _d(j['medianPricePerErfM2']),
+        radiusM: j['radiusM'] as int?,
+        excludedMultiProperty: j['excludedMultiProperty'] as int? ?? 0,
+        excludedNoBuilding: j['excludedNoBuilding'] as int? ?? 0,
+        excludedTooFar: j['excludedTooFar'] as int? ?? 0,
       );
 }
 
@@ -224,6 +267,77 @@ class ValueRange {
 
   factory ValueRange.fromJson(Map<String, dynamic> j) =>
       ValueRange(low: _d(j['low']), mid: _d(j['mid']), high: _d(j['high']));
+}
+
+/// A registered sale of the subject property itself.
+class SaleRecord {
+  final DateTime date;
+  final double priceZar;
+  const SaleRecord(this.date, this.priceZar);
+
+  static SaleRecord? fromJson(Map<String, dynamic>? j) {
+    final date = DateTime.tryParse(j?['saleDate'] as String? ?? '');
+    final price = _d(j?['priceZar']);
+    return date == null || price == null ? null : SaleRecord(date, price);
+  }
+}
+
+class YearlySales {
+  final int year;
+  final int sales;
+  final double medianPriceZar;
+  const YearlySales(this.year, this.sales, this.medianPriceZar);
+}
+
+class PriceBand {
+  final double fromZar;
+  final double toZar;
+  final int sales;
+  final double percent;
+  const PriceBand(this.fromZar, this.toZar, this.sales, this.percent);
+}
+
+/// Every market sale in the area the comparables came from, by year and by
+/// price band (for the report's charts).
+class AreaMarket {
+  final int? radiusM;
+  final int sales;
+  final double? medianPriceZar;
+  final List<YearlySales> byYear;
+  final List<PriceBand> priceBands;
+
+  const AreaMarket({
+    this.radiusM,
+    required this.sales,
+    this.medianPriceZar,
+    this.byYear = const [],
+    this.priceBands = const [],
+  });
+
+  static AreaMarket? fromJson(Map<String, dynamic>? j) => j == null
+      ? null
+      : AreaMarket(
+          radiusM: j['radiusM'] as int?,
+          sales: j['sales'] as int? ?? 0,
+          medianPriceZar: _d(j['medianPriceZar']),
+          byYear: [
+            for (final y in (j['byYear'] as List? ?? const []))
+              YearlySales(
+                y['year'] as int,
+                y['sales'] as int? ?? 0,
+                _d(y['medianPriceZar']) ?? 0,
+              ),
+          ],
+          priceBands: [
+            for (final b in (j['priceBands'] as List? ?? const []))
+              PriceBand(
+                _d(b['fromZar']) ?? 0,
+                _d(b['toZar']) ?? 0,
+                b['sales'] as int? ?? 0,
+                _d(b['percent']) ?? 0,
+              ),
+          ],
+        );
 }
 
 /// Where a figure in the report came from.
@@ -278,10 +392,46 @@ class PropertyReport {
   final ComparableSummary? comparableSummary;
   final ValueRange? indicativeValue;
 
+  /// Set when [indicativeValue] was carried to the floor area captured on the
+  /// listing (not the City's dwelling extent); see [forListingFloorArea].
+  final double? sizedFromListingM2;
+
+  /// The range on the City's dwelling extent, kept when [indicativeValue] was
+  /// carried to the listing's floor area, so the report can show both.
+  final ValueRange? cityRange;
+
   final List<ImageryRef> imagery;
   final String sitePlanUrl;
+
+  /// The neighbourhood map (SVG, our drawing from City open data); add
+  /// `&mode=block` for the close-up. Null where it is not drawn.
+  final String? areaMapUrl;
   final List<Provenance> provenance;
   final DateTime generatedAt;
+
+  /// Who published the data, e.g. "City of Johannesburg open data".
+  final String dataSource;
+
+  /// How the comparables were chosen, as a sentence to print.
+  final String? comparablesMethod;
+
+  /// What this area's data cannot provide (e.g. no building sizes in
+  /// Johannesburg, only erf details elsewhere). Null for full coverage.
+  final String? coverageNote;
+
+  final DateTime? rollEffectiveFrom;
+
+  /// The subject's own last registered sale, when the source publishes it.
+  final SaleRecord? lastSale;
+
+  /// The latest sales in the subject's own street.
+  final List<ComparableSale> streetSales;
+
+  final AreaMarket? areaMarket;
+
+  /// Sales agents reported in the suburb. Null when the API could not read
+  /// them; empty when none were reported.
+  final AgentSalesSummary? agentSales;
 
   const PropertyReport({
     required this.municipality,
@@ -294,8 +444,17 @@ class PropertyReport {
     required this.comparables,
     required this.imagery,
     required this.sitePlanUrl,
+    this.areaMapUrl,
     required this.provenance,
     required this.generatedAt,
+    this.dataSource = 'City of Cape Town open data',
+    this.comparablesMethod,
+    this.coverageNote,
+    this.rollEffectiveFrom,
+    this.lastSale,
+    this.streetSales = const [],
+    this.areaMarket,
+    this.agentSales,
     this.valuationRef,
     this.lat,
     this.lng,
@@ -315,6 +474,8 @@ class PropertyReport {
     this.suburbStats,
     this.comparableSummary,
     this.indicativeValue,
+    this.sizedFromListingM2,
+    this.cityRange,
   });
 
   factory PropertyReport.fromJson(Map<String, dynamic> j) {
@@ -323,6 +484,7 @@ class PropertyReport {
         parse(e as Map<String, dynamic>),
     ];
     final asAt = j['municipalValueAsAt'] as String?;
+    final effective = j['rollEffectiveFrom'] as String?;
     return PropertyReport(
       municipality: j['municipality'] as String? ?? 'coct',
       erf: j['erf'] as String,
@@ -361,10 +523,25 @@ class PropertyReport {
           : ValueRange.fromJson(j['indicativeValue'] as Map<String, dynamic>),
       imagery: list('imagery', ImageryRef.fromJson),
       sitePlanUrl: j['sitePlanUrl'] as String? ?? '',
+      areaMapUrl: j['areaMapUrl'] as String?,
       provenance: list('provenance', Provenance.fromJson),
+      dataSource: j['dataSource'] as String? ?? 'City of Cape Town open data',
+      comparablesMethod: j['comparablesMethod'] as String?,
+      coverageNote: j['coverageNote'] as String?,
+      rollEffectiveFrom: effective == null
+          ? null
+          : DateTime.tryParse(effective),
       generatedAt:
           DateTime.tryParse(j['generatedAtUtc'] as String? ?? '') ??
           DateTime.now().toUtc(),
+      lastSale: SaleRecord.fromJson(j['lastSale'] as Map<String, dynamic>?),
+      streetSales: list('streetSales', ComparableSale.fromJson),
+      areaMarket: AreaMarket.fromJson(j['areaMarket'] as Map<String, dynamic>?),
+      agentSales: j['agentComparables'] == null
+          ? null
+          : AgentSalesSummary.fromJson(
+              j['agentComparables'] as Map<String, dynamic>,
+            ),
     );
   }
 
@@ -376,8 +553,162 @@ class PropertyReport {
     return '${a.substring(0, a.length - s.length).trim()}, $s';
   }
 
+  /// This report with the indicative range carried to [floorM2], the floor
+  /// area the agent captured, when it differs from the City's dwelling extent
+  /// by more than 5%: each included sale (indexed to today) scaled with the
+  /// same size elasticity the API uses (0.6), then the median and the
+  /// interpolated quartiles, rounded to R 10 000.
+  PropertyReport forListingFloorArea(double? floorM2) {
+    final city = dwellingExtentM2;
+    if (floorM2 == null || floorM2 <= 0 || indicativeValue == null) return this;
+    if (city != null && city > 0 && (floorM2 / city - 1).abs() <= 0.05) {
+      return this;
+    }
+    final implied = [
+      for (final c in includedComparables)
+        if (c.dwellingExtentM2 > 0)
+          (c.indexedPriceZar ?? c.salePriceZar) *
+              math.pow(floorM2 / c.dwellingExtentM2, sizeElasticity),
+    ]..sort();
+    if (implied.isEmpty) return this;
+    double at(double q) {
+      final pos = q * (implied.length - 1);
+      final lo = pos.floor();
+      final hi = math.min(lo + 1, implied.length - 1);
+      return implied[lo] + (implied[hi] - implied[lo]) * (pos - lo);
+    }
+
+    double r(double v) => (v / 10000).round() * 10000.0;
+    return PropertyReport(
+      municipality: municipality,
+      erf: erf,
+      address: address,
+      suburb: suburb,
+      township: township,
+      buildings: buildings,
+      approvedWork: approvedWork,
+      comparables: comparables,
+      imagery: imagery,
+      sitePlanUrl: sitePlanUrl,
+      areaMapUrl: areaMapUrl,
+      provenance: provenance,
+      generatedAt: generatedAt,
+      dataSource: dataSource,
+      comparablesMethod: comparablesMethod,
+      coverageNote: coverageNote,
+      rollEffectiveFrom: rollEffectiveFrom,
+      lastSale: lastSale,
+      streetSales: streetSales,
+      areaMarket: areaMarket,
+      agentSales: agentSales,
+      valuationRef: valuationRef,
+      lat: lat,
+      lng: lng,
+      extentM2: extentM2,
+      extentM2Geodesic: extentM2Geodesic,
+      zoningCode: zoningCode,
+      zoningDescription: zoningDescription,
+      ward: ward,
+      subCouncil: subCouncil,
+      legalStatus: legalStatus,
+      dwellingExtentM2: dwellingExtentM2,
+      totalRoofM2: totalRoofM2,
+      municipalValueZar: municipalValueZar,
+      municipalValueAsAt: municipalValueAsAt,
+      ratingCategory: ratingCategory,
+      rollVersion: rollVersion,
+      suburbStats: suburbStats,
+      comparableSummary: comparableSummary,
+      indicativeValue: ValueRange(
+        low: r(at(0.25)),
+        mid: r(at(0.5)),
+        high: r(at(0.75)),
+      ),
+      sizedFromListingM2: floorM2,
+      cityRange: indicativeValue,
+    );
+  }
+
+  /// How much of a price difference a size difference makes: a home twice
+  /// the size sells for about 2^0.6 = 1.5 times as much (as in the API).
+  static const sizeElasticity = 0.6;
+
+  /// The range to show: from municipal sales when there is one, otherwise
+  /// from agent-reported sales (see [rangeFromAgentSales]).
+  ValueRange? get bestRange => indicativeValue ?? agentSales?.indicativeValue;
+
+  /// True when [bestRange] comes from agent-reported sales, which the report
+  /// must say, since they are not registered transfers.
+  bool get rangeFromAgentSales =>
+      indicativeValue == null && agentSales?.indicativeValue != null;
+
   List<ComparableSale> get includedComparables =>
       comparables.where((c) => c.included).toList();
+
+  /// [address] without this property's suburb or township at the end, for
+  /// tables and the letter where every sale is in the same place.
+  String withoutSuburb(String address) {
+    var a = address.trim();
+    for (final place in {suburb, township}) {
+      final p = place.trim();
+      if (p.isNotEmpty && a.toUpperCase().endsWith(' ${p.toUpperCase()}')) {
+        a = a.substring(0, a.length - p.length - 1).trim();
+      }
+    }
+    return a;
+  }
+
+  /// For the agent before sending: the listing's floor area differs from
+  /// the City's and the two give different ranges. Null when they agree.
+  String? get floorAreaWarning {
+    final listing = sizedFromListingM2, city = dwellingExtentM2;
+    final onCity = cityRange, onListing = indicativeValue;
+    if (listing == null || city == null || city <= 0) return null;
+    if (onCity?.low == null || onCity?.high == null) return null;
+    if (onListing?.low == null || onListing?.high == null) return null;
+    final diff = ((listing / city - 1) * 100).round();
+    return 'The listing\'s floor area (${listing.round()} m²) is '
+        '${diff.abs()}% ${diff > 0 ? 'larger' : 'smaller'} than the City\'s '
+        'record (${city.round()} m²). On the City\'s size the sales indicate '
+        '${rand(onCity!.low!)} to ${rand(onCity.high!)}, against '
+        '${rand(onListing!.low!)} to ${rand(onListing.high!)} on yours. Check '
+        'the floor area before you send the pack.';
+  }
+
+  /// Why the range is less certain than usual, or null: the home is larger
+  /// or smaller than every sale used (so the size adjustment does most of
+  /// the work), or there are few sales.
+  String? get confidenceNote {
+    final used = includedComparables
+        .where((c) => c.dwellingExtentM2 > 0)
+        .toList();
+    final size = sizedFromListingM2 ?? dwellingExtentM2;
+    if (used.isEmpty || size == null || size <= 0) return null;
+    final sizes = used.map((c) => c.dwellingExtentM2).toList()..sort();
+    String m2(double v) => '${v.round()} m²';
+    final notes = [
+      if (size > sizes.last * 1.1)
+        'This home (${m2(size)}) is larger than every comparable sale (the '
+            'largest was ${m2(sizes.last)}), so the range leans on the size '
+            'adjustment.',
+      if (size < sizes.first * 0.9)
+        'This home (${m2(size)}) is smaller than every comparable sale (the '
+            'smallest was ${m2(sizes.first)}), so the range leans on the size '
+            'adjustment.',
+      if (used.length < 5) 'Only ${used.length} comparable sales were found.',
+    ];
+    return notes.isEmpty
+        ? null
+        : '${notes.join(' ')} Few similar homes have sold nearby, so treat the '
+              'range as less certain than usual.';
+  }
+
+  /// The comparables table: the sales used, then those listed for reference,
+  /// numbered in this order (as on the map).
+  List<ComparableSale> get listedComparables => [
+    ...includedComparables,
+    ...comparables.where((c) => c.reference && !c.included),
+  ];
 
   /// Imagery that may go into the PDF. Street View is excluded by the server.
   List<ImageryRef> get printableImagery =>

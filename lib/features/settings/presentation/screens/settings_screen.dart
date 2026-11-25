@@ -9,6 +9,8 @@ import '../../../../core/theme/themes.dart';
 import '../../../../core/widgets/country_picker.dart';
 import '../../../auth/providers/auth_provider.dart';
 import '../widgets/agency_logo.dart';
+import '../widgets/delete_account_dialog.dart';
+import '../../../../core/widgets/app_snack.dart';
 
 class SettingsScreen extends ConsumerWidget {
   const SettingsScreen({super.key});
@@ -38,6 +40,22 @@ class SettingsScreen extends ConsumerWidget {
         context.go(AppRoutes.loginPath);
       }
     }
+  }
+
+  /// Deletes the account after the agent confirms with their password, then
+  /// signs out: nothing of theirs is left on the phone either.
+  Future<void> _handleDeleteAccount(
+    BuildContext context,
+    WidgetRef ref,
+    RealEstateTheme theme,
+  ) async {
+    if (!await showDeleteAccountDialog(context, theme)) return;
+    await ref.read(authProvider.notifier).logout();
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnack(
+      const SnackBar(content: Text('Your account has been deleted.')),
+    );
+    context.go(AppRoutes.loginPath);
   }
 
   @override
@@ -141,7 +159,7 @@ class SettingsScreen extends ConsumerWidget {
                   ListTile(
                     title: Text('My Profile', style: textTheme.titleMedium),
                     subtitle: Text(
-                      'Name, contact details and agency',
+                      'Photo, contact details, agency and office',
                       style: textTheme.bodyMedium,
                     ),
                     leading: Icon(
@@ -157,6 +175,23 @@ class SettingsScreen extends ConsumerWidget {
                   Divider(height: 1, color: theme.borderLight),
                   ListTile(
                     title: Text(
+                      'Report settings',
+                      style: textTheme.titleMedium,
+                    ),
+                    subtitle: Text(
+                      'Commission, bond defaults and room weights',
+                      style: textTheme.bodyMedium,
+                    ),
+                    leading: Icon(Icons.tune, color: theme.primaryColor),
+                    trailing: Icon(
+                      Icons.chevron_right,
+                      color: theme.textSecondary,
+                    ),
+                    onTap: () => context.push(AppRoutes.reportSettingsPath),
+                  ),
+                  Divider(height: 1, color: theme.borderLight),
+                  ListTile(
+                    title: Text(
                       'Sign Out',
                       style: textTheme.titleMedium?.copyWith(
                         color: theme.primaryColor,
@@ -164,6 +199,17 @@ class SettingsScreen extends ConsumerWidget {
                     ),
                     leading: Icon(Icons.logout, color: theme.primaryColor),
                     onTap: () => _handleLogout(context, ref),
+                  ),
+                  Divider(height: 1, color: theme.borderLight),
+                  ListTile(
+                    title: Text(
+                      'Delete Account',
+                      style: textTheme.titleMedium?.copyWith(
+                        color: theme.error,
+                      ),
+                    ),
+                    leading: Icon(Icons.delete_forever, color: theme.error),
+                    onTap: () => _handleDeleteAccount(context, ref, theme),
                   ),
                 ],
               ),
@@ -203,7 +249,7 @@ class _RegionCard extends ConsumerWidget {
       await notifier.setCountry(picked);
     }
     if (!context.mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
+    ScaffoldMessenger.of(context).showSnack(
       SnackBar(
         content: Text(
           isCurrency

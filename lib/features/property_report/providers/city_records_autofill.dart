@@ -1,14 +1,17 @@
+import 'dart:async';
 import 'dart:developer' as developer;
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../property_overview/data/models/property_state.dart';
 import '../../property_overview/providers/property_provider.dart';
+import '../data/models/area_details.dart';
+import '../data/models/marketing_area.dart';
 import '../data/models/property_report.dart';
 import '../data/property_report_repository.dart';
 import 'property_report_provider.dart';
 
-/// Maps a City of Cape Town zoning to the app's five zoning chips (ids 1–5 in
+/// Maps a municipal zoning (Cape Town codes, Johannesburg names) to the app's five zoning chips (ids 1–5 in
 /// Building Info). Null when it is none of them (e.g. open space, utility).
 int? zoningIdFor(String? code, String? description) {
   final c = (code ?? '').toUpperCase();
@@ -36,6 +39,9 @@ class AutofillPlan {
   final String? floorArea;
   final int? zoningId;
 
+  /// The owners' purchase, from the last registered sale of the property.
+  final SaleRecord? lastPurchase;
+
   /// Human-readable list of what was filled, for the confirmation.
   final List<String> filled;
 
@@ -46,6 +52,7 @@ class AutofillPlan {
     this.erfSize,
     this.floorArea,
     this.zoningId,
+    this.lastPurchase,
     this.filled = const [],
   });
 
@@ -53,6 +60,7 @@ class AutofillPlan {
   bool get touchesAddress => erfNumber != null || latitude != null;
   bool get touchesBuildingInfo =>
       erfSize != null || floorArea != null || zoningId != null;
+  bool get touchesValuation => lastPurchase != null;
 }
 
 const _zoningNames = {
@@ -97,7 +105,15 @@ AutofillPlan planAutofill(PropertyState s, PropertyReport r) {
       : null;
   if (zoning != null) filled.add('zoning (${_zoningNames[zoning]})');
 
+  // The last registered sale is the owners' purchase; only when nothing of
+  // it is captured yet.
+  final sale = !s.listingValuation.hasPurchase ? r.lastSale : null;
+  if (sale != null) {
+    filled.add('last sale (${sale.date.year}, ${rand(sale.priceZar)})');
+  }
+
   return AutofillPlan(
+    lastPurchase: sale,
     erfNumber: erf,
     latitude: lat,
     longitude: lng,
@@ -118,12 +134,15 @@ class CityRecordsAutofillState {
 }
 
 /// Fills a listing's empty fields (erf number, erf size, floor area, zoning,
-/// location) from City of Cape Town records, and saves them.
+/// location) from municipal records (Cape Town, Johannesburg, or the national cadastre),
+/// and saves them.
 ///
-/// Runs after the address is saved, in the background: the City can take
-/// 10–30 seconds, and the agent should not wait for it. Kept alive so it
-/// finishes after the address screen closes; it also warms the API's cache,
-/// so the valuation report opens instantly afterwards.
+/// Runs as part of saving the address, and the agent waits for it (at most
+/// [timeout]): filling in sizes while the City's answer is still on its way
+/// meant the two crossed, and the details arrived minutes later. Only the
+/// property's own record is fetched, which is quick; the full report (with
+/// the area's sales) is made afterwards in the background by
+/// `ReportPreparer`, ready when the agent opens it.
 class CityRecordsAutofill extends Notifier<CityRecordsAutofillState> {
   @override
   CityRecordsAutofillState build() => const CityRecordsAutofillState();
@@ -135,48 +154,65 @@ class CityRecordsAutofill extends Notifier<CityRecordsAutofillState> {
       s.zoningId == null ||
       s.latitude == null;
 
-  /// Looks the listing up and fills what is missing. Silent when the
-  /// property is not in Cape Town, the address is ambiguous, or the City is
-  /// unreachable: this is a convenience, never a blocker.
-  Future<void> fillMissing() async {
+  /// Longest the agent waits for the City before going on without it.
+  static const timeout = Duration(seconds: 40);
+
+  /// Looks the listing up and fills what is missing. Returns a note for the
+  /// agent when the records were too slow; otherwise null (what was filled is
+  /// in [CityRecordsAutofillState.message]). Silent when the property is not
+  /// covered or the address is ambiguous: this never blocks saving.
+  Future<String?> fillMissing() async {
     final listing = ref.read(propertyViewModelProvider);
     final listingId = listing.listingId;
-    if (listingId == null || !needsFilling(listing) || state.running) return;
+    if (listingId == null || !needsFilling(listing) || state.running) {
+      return null;
+    }
     if (listing.street.trim().isEmpty &&
         listing.erfNumber.trim().isEmpty &&
         listing.latitude == null) {
-      return;
+      return null;
     }
 
     state = const CityRecordsAutofillState(running: true);
     try {
       final repo = ref.read(propertyReportRepositoryProvider);
-      final found = await repo.resolve(
-        ReportQuery(
-          address: [
-            '${listing.streetNumber} ${listing.street}'.trim(),
-            listing.suburb.trim(),
-          ].where((p) => p.isNotEmpty).join(', '),
-          erf: listing.erfNumber,
-          suburb: listing.suburb,
-          lat: listing.latitude,
-          lng: listing.longitude,
-        ),
+      final query = ReportQuery(
+        address: [
+          '${listing.streetNumber} ${listing.street}'.trim(),
+          listing.suburb.trim(),
+        ].where((p) => p.isNotEmpty).join(', '),
+        erf: listing.erfNumber,
+        suburb: listing.suburb,
+        lat: listing.latitude,
+        lng: listing.longitude,
       );
-      if (found.length != 1) {
+      // One limit for the whole lookup, finding the erf included.
+      final report = await () async {
+        final found = await repo.resolve(query);
+        if (found.length != 1) return null;
+        return repo.fetchReport(found.single, includeComparables: false);
+      }().timeout(timeout);
+      if (report == null) {
         state = const CityRecordsAutofillState();
-        return;
+        return null;
       }
-      final report = await repo.fetchReport(found.single);
       // The agent may have moved to another listing meanwhile.
       if (ref.read(propertyViewModelProvider).listingId != listingId) {
         state = const CityRecordsAutofillState();
-        return;
+        return null;
       }
       await apply(report);
+      return null;
+    } on TimeoutException {
+      state = const CityRecordsAutofillState();
+      return "The City's records are slow to answer just now, so the erf "
+          'size, floor area and zoning were not filled in. Enter them in '
+          'Building Info, or open the valuation report later and tap '
+          '"Fill in the listing".';
     } catch (e) {
       developer.log('City records autofill skipped: $e');
       state = const CityRecordsAutofillState();
+      return null;
     }
   }
 
@@ -209,12 +245,35 @@ class CityRecordsAutofill extends Notifier<CityRecordsAutofillState> {
 
     if (plan.touchesAddress) await viewModel.saveAddress();
     if (plan.touchesBuildingInfo) await viewModel.saveBuildingInfo();
+    if (plan.lastPurchase case final sale?) {
+      viewModel.editValuation(
+        (v) => v.copyWith(
+          lastPurchaseDate: DateTime(sale.date.year, sale.date.month),
+          lastPurchasePrice: sale.priceZar.round().toString(),
+        ),
+      );
+      await viewModel.saveValuation();
+    }
 
     final message = plan.filled.isEmpty
         ? null
-        : 'Filled in from City of Cape Town records: ${plan.filled.join(', ')}.';
+        : 'Filled in from ${report.dataSource}: ${plan.filled.join(', ')}.';
     state = CityRecordsAutofillState(message: message);
     return message;
+  }
+
+  /// Sets the listing's marketing area (Property24's name for where it is)
+  /// from the homes for sale nearest it, when the agent has not set one.
+  Future<void> applyMarketingArea(ForSale? forSale) async {
+    final listing = ref.read(propertyViewModelProvider);
+    if (listing.listingId == null || listing.marketingArea.trim().isNotEmpty) {
+      return;
+    }
+    final area = suggestMarketingArea(forSale);
+    if (area == null) return;
+    final viewModel = ref.read(propertyViewModelProvider.notifier);
+    viewModel.updateIdentifiers(marketingArea: area);
+    await viewModel.saveAddress();
   }
 
   void clearMessage() => state = const CityRecordsAutofillState();

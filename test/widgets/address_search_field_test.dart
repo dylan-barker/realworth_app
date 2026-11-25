@@ -5,22 +5,68 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:realworth/core/theme/themes.dart';
 import 'package:realworth/features/property_report/data/models/address_suggestion.dart';
+import 'package:realworth/features/property_report/data/models/agent_sales.dart';
+import 'package:realworth/features/property_report/data/models/area_details.dart';
 import 'package:realworth/features/property_report/data/models/property_report.dart';
 import 'package:realworth/features/property_report/data/property_report_repository.dart';
 import 'package:realworth/features/property_report/presentation/widgets/address_search_field.dart';
 import 'package:realworth/features/property_report/providers/property_report_provider.dart';
 
-/// Answers suggestions from memory and counts how often it was asked.
+/// Answers suggestions from memory and counts how often it was asked: the
+/// City records answer with the erf, OpenStreetMap with the same address as a
+/// street and with a suburb.
 class _FakeRepo implements PropertyReportRepository {
   int calls = 0;
-  String? lastQuery;
 
   @override
-  Future<List<AddressSuggestion>> suggest(String text) async {
+  Future<ParcelOutline?> parcelAt(double lat, double lng) async => null;
+  final queries = <String>[];
+
+  @override
+  Future<List<AddressSuggestion>> suggest(
+    String text, {
+    bool national = false,
+    double? lat,
+    double? lng,
+  }) async {
     calls++;
-    lastQuery = text;
+    queries.add(text);
+    if (national) {
+      return const [
+        AddressSuggestion(
+          kind: SuggestionKind.street,
+          title: '17 Pine Road',
+          subtitle: 'Claremont, Cape Town',
+          streetNumber: '17',
+          streetName: 'Pine Road',
+          suburb: 'Claremont',
+          city: 'Cape Town',
+          province: 'Western Cape',
+          country: 'South Africa',
+          source: 'OpenStreetMap',
+          rank: 92,
+          key: 'place 17 pine road claremont',
+        ),
+        AddressSuggestion(
+          kind: SuggestionKind.area,
+          title: 'Pinelands',
+          subtitle: 'Cape Town, Western Cape',
+          streetName: '',
+          suburb: 'Pinelands',
+          city: 'Cape Town',
+          province: 'Western Cape',
+          country: 'South Africa',
+          source: 'OpenStreetMap',
+          rank: 50,
+          key: 'area pinelands western cape',
+        ),
+      ];
+    }
     return const [
       AddressSuggestion(
+        kind: SuggestionKind.property,
+        title: '17 Pine Road',
+        subtitle: 'Claremont, Cape Town',
         label: '17 Pine Road, Claremont',
         streetNumber: '17',
         streetName: 'Pine Road',
@@ -31,16 +77,84 @@ class _FakeRepo implements PropertyReportRepository {
         erf: '53927',
         lat: -33.98974,
         lng: 18.470992,
+        numberVerified: true,
+        source: 'City records',
+        rank: 118,
+        key: 'place 17 pine road claremont',
       ),
     ];
   }
 
   @override
+  Future<List<AddressSuggestion>> addressAt(double lat, double lng) =>
+      throw UnimplementedError();
+
+  @override
   Future<List<PropertyCandidate>> resolve(ReportQuery q) =>
       throw UnimplementedError();
+
   @override
-  Future<PropertyReport> fetchReport(PropertyCandidate c) =>
+  Future<AreaDetails> fetchArea(double lat, double lng) =>
       throw UnimplementedError();
+
+  @override
+  Future<ForSale> fetchForSale(
+    PropertyReport report, {
+    int? bedrooms,
+    double? floorM2,
+    double? erfM2,
+    int? p24Suburb,
+    double? priceZar,
+    int max = 4,
+  }) => throw UnimplementedError();
+
+  @override
+  Future<bool> addAgentSale(NewAgentSale sale) => throw UnimplementedError();
+
+  @override
+  Future<Map<String, dynamic>> fetchReportJson(
+    PropertyCandidate c, {
+    bool includeComparables = true,
+  }) => throw UnimplementedError();
+
+  @override
+  Future<List<dynamic>> fetchMarketJson(
+    String suburb, {
+    int? excludeListingId,
+    double? lat,
+    double? lng,
+  }) => throw UnimplementedError();
+
+  @override
+  Future<Map<String, dynamic>> fetchAreaJson(double lat, double lng) =>
+      throw UnimplementedError();
+
+  @override
+  Future<Map<String, dynamic>> fetchForSaleJson(
+    PropertyReport report, {
+    int? bedrooms,
+    double? floorM2,
+    double? erfM2,
+    int? p24Suburb,
+    double? priceZar,
+    int max = 4,
+  }) => throw UnimplementedError();
+
+  @override
+  Future<void> deleteAgentSale(String id) => throw UnimplementedError();
+
+  @override
+  Future<List<MarketListing>> fetchMarket(
+    String suburb, {
+    int? excludeListingId,
+    double? lat,
+    double? lng,
+  }) => throw UnimplementedError();
+  @override
+  Future<PropertyReport> fetchReport(
+    PropertyCandidate c, {
+    bool includeComparables = true,
+  }) => throw UnimplementedError();
   @override
   Future<String?> fetchSitePlan(String sitePlanUrl) =>
       throw UnimplementedError();
@@ -50,7 +164,7 @@ class _FakeRepo implements PropertyReportRepository {
 
 void main() {
   testWidgets(
-    'suggests Cape Town addresses after a pause and returns the pick',
+    'searches City records and all of South Africa at once, as one list',
     (tester) async {
       final repo = _FakeRepo();
       AddressSuggestion? picked;
@@ -64,33 +178,36 @@ void main() {
               body: AddressSearchField(
                 theme: theme,
                 textTheme: Typography.material2021().black,
-                onPickCity: (s) => picked = s,
-                onPickElsewhere: (_) {},
+                onPick: (s) => picked = s,
+                useDeviceLocation: false,
               ),
             ),
           ),
         ),
       );
 
-      // Typing quickly asks once, for the whole text, after the pause.
+      // Typing quickly searches once, for the whole text, after the pause:
+      // the City records and the national search together.
       await tester.enterText(find.byType(TextField), '17 p');
       await tester.pump(const Duration(milliseconds: 100));
       await tester.enterText(find.byType(TextField), '17 pine');
       await tester.pump(const Duration(milliseconds: 400));
       await tester.pump();
-      expect(repo.calls, 1);
-      expect(repo.lastQuery, '17 pine');
+      expect(repo.calls, 2);
+      expect(repo.queries, ['17 pine', '17 pine']);
 
-      expect(find.text('17 Pine Road, Claremont'), findsOneWidget);
-      expect(find.text('Erf 53927 · Cape Town'), findsOneWidget);
-      expect(find.textContaining('Search all of South Africa'), findsOneWidget);
+      // The same address from both sources is one row (the erf); the far
+      // weaker suburb is left off. No "search elsewhere" step.
+      expect(find.text('Claremont, Cape Town'), findsOneWidget);
+      expect(find.text('Pinelands'), findsNothing);
+      expect(find.textContaining('Search all'), findsNothing);
 
-      await tester.tap(find.text('17 Pine Road, Claremont'));
+      await tester.tap(find.text('Claremont, Cape Town'));
       await tester.pump();
       expect(picked?.erf, '53927');
       expect(picked?.isProperty, isTrue);
       // The list closes once an address is chosen.
-      expect(find.text('Erf 53927 · Cape Town'), findsNothing);
+      expect(find.text('Claremont, Cape Town'), findsNothing);
     },
   );
 
@@ -104,8 +221,8 @@ void main() {
             body: AddressSearchField(
               theme: RealEstateTheme.crimson(),
               textTheme: Typography.material2021().black,
-              onPickCity: (_) {},
-              onPickElsewhere: (_) {},
+              onPick: (_) {},
+              useDeviceLocation: false,
             ),
           ),
         ),
@@ -115,4 +232,55 @@ void main() {
     await tester.pump(const Duration(milliseconds: 500));
     expect(repo.calls, 0);
   });
+
+  testWidgets(
+    'offers the current location as soon as it has focus, and the pin when '
+    'nothing fits',
+    (tester) async {
+      final repo = _FakeRepo();
+      var usedLocation = 0, setPin = 0;
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [propertyReportRepositoryProvider.overrideWithValue(repo)],
+          child: MaterialApp(
+            home: Scaffold(
+              body: AddressSearchField(
+                theme: RealEstateTheme.crimson(),
+                textTheme: Typography.material2021().black,
+                onPick: (_) {},
+                onUseMyLocation: () => usedLocation++,
+                onSetPinOnMap: () => setPin++,
+                autofocus: true,
+                useDeviceLocation: false,
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+      // Opened with the keyboard up: the location row is already there.
+      expect(find.text('Use my current location'), findsOneWidget);
+      expect(find.textContaining("Can't find it"), findsNothing);
+
+      await tester.enterText(find.byType(TextField), '17 pine');
+      await tester.pump(const Duration(milliseconds: 400));
+      await tester.pump();
+      expect(
+        find.text("Can't find it? Set the pin on the map"),
+        findsOneWidget,
+      );
+
+      await tester.tap(find.text("Can't find it? Set the pin on the map"));
+      await tester.pump();
+      expect(setPin, 1);
+      // The list closes.
+      expect(find.text('Use my current location'), findsNothing);
+
+      await tester.tap(find.byType(TextField));
+      await tester.pump();
+      await tester.tap(find.text('Use my current location'));
+      await tester.pump();
+      expect(usedLocation, 1);
+    },
+  );
 }

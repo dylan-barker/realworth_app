@@ -11,10 +11,13 @@ import '../../../../core/network/photo_urls.dart';
 import '../../../../core/network/run_limited.dart';
 import '../../../../core/network/providers/api_providers.dart';
 import '../data/models/contact.dart';
+import '../data/models/listing_details.dart';
 import '../data/models/listing_document.dart';
 import '../data/models/listing_parking.dart';
+import '../data/models/listing_valuation.dart';
 import '../data/models/property_state.dart';
 import '../data/models/room.dart';
+import '../data/models/unit_details.dart';
 import '../data/repositories/property_repository.dart';
 
 final propertyRepositoryProvider = Provider.autoDispose<PropertyRepository>((
@@ -225,6 +228,25 @@ class PropertyViewModel extends Notifier<PropertyState> {
     }
   }
 
+  /// Saves the listing's further details (Building Info's construction,
+  /// Purchase History's renovations, Running Costs' billing, the mandate).
+  Future<void> saveDetails() async {
+    final id = state.listingId;
+    if (id == null) return;
+    state = state.copyWith(errorMessage: null);
+    try {
+      await _repository.updateDetails(id, state.details);
+    } catch (e) {
+      if (!ref.mounted) return;
+      state = state.copyWith(errorMessage: mapFailure(e).message);
+    }
+  }
+
+  /// Any change to the details, e.g. `(d) => d.copyWith(style: 'Modern')`.
+  void editDetails(ListingDetails Function(ListingDetails d) change) {
+    state = state.copyWith(details: change(state.details));
+  }
+
   Future<void> savePropertyFeatures() async {
     final id = state.listingId;
     if (id == null) return;
@@ -418,8 +440,16 @@ class PropertyViewModel extends Notifier<PropertyState> {
     state = state.copyWith(latitude: null, longitude: null);
   }
 
-  void updateIdentifiers({String? estateName, String? erfNumber}) {
-    state = state.copyWith(estateName: estateName, erfNumber: erfNumber);
+  void updateIdentifiers({
+    String? estateName,
+    String? erfNumber,
+    String? marketingArea,
+  }) {
+    state = state.copyWith(
+      estateName: estateName,
+      erfNumber: erfNumber,
+      marketingArea: marketingArea,
+    );
   }
 
   void updateTechnicalSpecs({
@@ -450,9 +480,21 @@ class PropertyViewModel extends Notifier<PropertyState> {
       id: 'custom-${DateTime.now().millisecondsSinceEpoch}',
       name: name,
       roomTypeId: roomTypeId,
+      // A flatlet starts as one bedroom, one bathroom, one kitchen.
+      unit: UnitDetails.isFlatletName(name) ? const UnitDetails() : null,
     );
     state = state.copyWith(rooms: [...state.rooms, newRoom]);
     return newRoom.id;
+  }
+
+  /// A flatlet's layout (bedrooms, bathrooms, kitchen, let out…).
+  void setRoomUnit(String roomId, UnitDetails unit) {
+    state = state.copyWith(
+      rooms: [
+        for (final r in state.rooms)
+          r.id == roomId ? r.copyWith(unit: unit) : r,
+      ],
+    );
   }
 
   void removeRoom(String roomId) {
@@ -880,14 +922,25 @@ class PropertyViewModel extends Notifier<PropertyState> {
     String? ownersNetPrice,
     String? agentValuation,
     String? commissionPercent,
+    String? lastPurchasePrice,
+    DateTime? lastPurchaseDate,
+    bool clearLastPurchaseDate = false,
   }) {
     state = state.copyWith(
       listingValuation: state.listingValuation.copyWith(
         ownersNetPrice: ownersNetPrice,
         agentValuation: agentValuation,
         commissionPercent: commissionPercent,
+        lastPurchasePrice: lastPurchasePrice,
+        lastPurchaseDate: lastPurchaseDate,
+        clearLastPurchaseDate: clearLastPurchaseDate,
       ),
     );
+  }
+
+  /// Any change to the valuation, e.g. `(v) => v.copyWith(valueLow: '…')`.
+  void editValuation(ListingValuation Function(ListingValuation v) change) {
+    state = state.copyWith(listingValuation: change(state.listingValuation));
   }
 
   void updateRunningCosts({
